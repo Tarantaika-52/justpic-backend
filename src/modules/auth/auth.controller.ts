@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { FastifyReply, FastifyRequest } from 'fastify';
+import { RegisterUserDto } from 'src/common/dto/user';
 
 /**
  * Эндпоинты для взаимодействия с авторизацией и аккаунтами
@@ -96,8 +97,8 @@ export class AuthController {
   public async register(
     @Req() req: FastifyRequest,
     @Res() reply: FastifyReply,
-    @Body() dto: object,
+    @Body() dto: RegisterUserDto,
   ) {
-    reply.send();
+    await this.authService.createUser(dto, req, reply);
   }
 }

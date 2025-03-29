@@ -1,0 +1,97 @@
+generator client {
+  provider        = "prisma-client-js"
+  output          = "../__generated__"
+  binaryTargets   = ["native", "debian-openssl-3.0.x"]
+  previewFeatures = ["prismaSchemaFolder"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DB_URI")
+}
+
+model User {
+  uid       String   @id @default(uuid()) @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  email    String @unique @map("email")
+  password String @map("password")
+
+  username   String  @unique @map("username")
+  isVerified Boolean @default(false) @map("is_verified")
+
+  userRole    Role       @default(REGULAR) @map("user_role")
+  status      UserStatus @default(ACTIVE) @map("user_status")
+  region      String     @default("EU") @map("user_region")
+  registerIP  String     @default("0.0.0.0") @map("register_IP")
+  lastLoginIP String     @default("0.0.0.0") @map("last_login_IP")
+
+  allowMetrics Boolean @default(true) @map("is_metrics_allowed")
+  allowNsfw    Boolean @default(false) @map("is_nsfw_allowed")
+  allowAiTrain Boolean @default(true) @map("is_train_AI_allowed")
+  allowAdverts Boolean @default(true) @map("is_advertising_allowed")
+
+  uiAccentColor String @default("ffffff") @map("ui_accent")
+
+  profile   Profile?
+  interests UserInterests?
+
+  @@index([uid, email, password, username])
+  @@map("accounts")
+}
+
+model Profile {
+  uid  String @id @default(uuid()) @map("user_id")
+  user User   @relation(fields: [uid], references: [uid])
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  fullName     String   @default("user") @map("full_name")
+  description  String?  @map("description")
+  iconUrl      String?  @map("icon_url")
+  tinyIconUrl  String?  @map("tiny_icon_url")
+  bannerUrl    String?  @map("banner_url")
+  iconColor    String?  @default("fff") @map("icon_accent_color")
+  bannerColor  String?  @default("fff") @map("banner_accent_color")
+  pubInterests String[] @map("public_user_interests")
+
+  visibility Visibility @default(PUBLIC) @map("profile_visibility")
+
+  @@index([uid, fullName, iconUrl])
+  @@map("profiles")
+}
+
+model UserInterests {
+  uid  String @id @default(uuid()) @map("user_id")
+  user User   @relation(fields: [uid], references: [uid])
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  favoriteThemes String[] @map("favorite_themes")
+  likedTags      String[] @map("liked_tags")
+  dislikedTags   String[] @map("disliked_tags")
+  likedPHashes   String[] @map("liked_pHashes")
+  likedColors    String[] @map("liked_colors")
+  viewedTags     String[] @map("viewed_tags")
+  searchedTags   String[] @map("searched_tags")
+
+  @@index([uid, favoriteThemes, likedTags, dislikedTags, searchedTags])
+  @@map("users_interests")
+}
+
+enum Role {
+  ADMIN
+  MODERATOR
+  REGULAR
+}
+
+enum Visibility {
+  PUBLIC
+  PRIVATE
+}
+
+enum UserStatus {
+  ACTIVE
+  FROZEN
+  BANNED
+}
