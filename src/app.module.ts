@@ -1,7 +1,10 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { LoggerMiddleware, SecurityMiddleware } from './common/middlewares';
-import { AuthModule, ProfileModule } from './modules';
+import { PrismaModule } from './shared/prisma/prisma.module';
+import { AuthModule } from './modules/auth/auth.module';
+import { ProfileModule } from './modules/profile/profile.module';
+import { UserModule } from './modules/user/user.module';
 
 @Module({
   imports: [
@@ -10,6 +13,8 @@ import { AuthModule, ProfileModule } from './modules';
     }),
     AuthModule,
     ProfileModule,
+    PrismaModule,
+    UserModule,
   ],
 })
 export class AppModule implements NestModule {
