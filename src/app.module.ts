@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ApiModule } from './api';
 import { CommonModule } from './common';
@@ -19,4 +19,8 @@ import { CacheModule } from '@nestjs/cache-manager';
     InfraModule,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    //
+  }
+}

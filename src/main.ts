@@ -8,6 +8,7 @@ import {
 } from '@nestjs/platform-fastify';
 import fastifyCookie from 'fastify-cookie';
 import fastifyHelmet from '@fastify/helmet';
+import fastifyMultipart from '@fastify/multipart';
 
 async function bootstrap() {
   const logger = new Logger('Main');
@@ -15,11 +16,11 @@ async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     new FastifyAdapter({
-      logger: false, // Логирование для запросов
+      logger: false,
     }),
   );
 
-  logger.log('Getting data from an .env file');
+  logger.log('⚙️ Getting config...');
   const configService = app.get(ConfigService);
   const corsOrigins = configService
     .getOrThrow<string>('CORS_ORIGINS')
@@ -27,7 +28,6 @@ async function bootstrap() {
     .map((e) => e.trim());
   const appPort = configService.getOrThrow<number>('APP_PORT');
   const cookieSecret = configService.getOrThrow<string>('COOKIE_SECRET');
-  const host = configService.getOrThrow<string>('APP_HOST');
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -40,6 +40,7 @@ async function bootstrap() {
   app.enableCors({
     origin: corsOrigins,
     credentials: true,
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],
     exposedHeaders: ['set-cookie'],
   });
 
@@ -49,12 +50,18 @@ async function bootstrap() {
   });
 
   await app.register(fastifyHelmet);
+  await app.register(fastifyMultipart, {
+    limits: {
+      files: 1,
+      fileSize: 100,
+      fields: 10,
+    },
+  });
 
   try {
     await app.listen(appPort, '0.0.0.0');
 
-    logger.log(`🚀 Server is running at: ${host}:${appPort}`);
-    logger.log(`📄 Documentation is available at: ${host}:${appPort}/docs`);
+    logger.log(`🚀 Server is running at: ${appPort}`);
   } catch (err) {
     logger.fatal(`❌ Failed to start server: ${err.message}`);
     process.exit(1);
