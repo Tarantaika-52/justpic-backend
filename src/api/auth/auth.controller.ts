@@ -3,13 +3,11 @@ import {
   Controller,
   HttpCode,
   HttpStatus,
+  Ip,
   Post,
-  Req,
-  Res,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterUserDTO } from 'src/common/dto/user/register-user.dto';
-import { FastifyReply, FastifyRequest } from 'fastify';
 import { AccountService } from '../account/account.service';
 
 @Controller('auth')
@@ -25,10 +23,9 @@ export class AuthController {
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   public async registerUser(
-    @Req() req: FastifyRequest,
-    @Res() rep: FastifyReply,
     @Body() dto: RegisterUserDTO,
+    @Ip() clientIP: string,
   ) {
-    await this.accountService.createNewUser(dto);
+    return await this.accountService.createNewUser(dto, clientIP);
   }
 }
