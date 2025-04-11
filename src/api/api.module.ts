@@ -1,13 +1,18 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from './auth/auth.module';
-import { APP_INTERCEPTOR } from '@nestjs/core';
-import { CacheInterceptor } from '@nestjs/cache-manager';
-import { AccountModule } from './account/account.module';
+import { AccountsModule } from './accounts/accounts.module';
 import { ProfileModule } from './profile/profile.module';
+import { CommonModule } from 'src/common';
+import { MetricsModule } from './metrics/metrics.module';
 
 @Module({
-  imports: [AuthModule, AccountModule, ProfileModule],
-  // Подключение автоматического кеширования GET-запросов
-  providers: [{ provide: APP_INTERCEPTOR, useClass: CacheInterceptor }],
+  imports: [
+    AuthModule,
+    AccountsModule,
+    ProfileModule,
+    CommonModule,
+    MetricsModule,
+  ],
+  exports: [AccountsModule],
 })
 export class ApiModule {}

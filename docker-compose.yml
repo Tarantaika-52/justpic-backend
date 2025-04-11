@@ -2,6 +2,11 @@ name: justpic-server
 
 volumes:
   postgres_data:
+  redis_data:
+  insight_data:
+
+networks:
+  redis-net:
 
 services:
   justpic-postgres-service:
@@ -16,3 +21,25 @@ services:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASS}
       POSTGRES_DB: ${DB_NAME}
+
+  justpic-redis-service:
+    container_name: justpic-redis-server
+    image: redis:7.2.7-alpine
+    ports:
+      - 6379:6379
+    mem_limit: 0.5GB
+    volumes:
+      - redis_data:/data
+    networks:
+      - redis-net
+    command: redis-server --requirepass ${REDIS_PASS}
+
+  redis-insight:
+    container_name: redis-insight-server
+    image: redis/redisinsight:latest
+    ports:
+      - 5540:5540
+    volumes:
+      - insight_data:/data
+    networks:
+      - redis-net

@@ -6,9 +6,12 @@ import {
   FastifyAdapter,
   NestFastifyApplication,
 } from '@nestjs/platform-fastify';
-import fastifyCookie from 'fastify-cookie';
 import fastifyHelmet from '@fastify/helmet';
 import fastifyMultipart from '@fastify/multipart';
+import { RedisService } from './infra/redis/redis.service';
+import fastifyCookie from '@fastify/cookie';
+import fastifySession from '@fastify/session';
+import { RedisStore } from 'connect-redis';
 
 async function bootstrap() {
   const logger = new Logger('Main');
@@ -29,6 +32,8 @@ async function bootstrap() {
   const appPort = configService.getOrThrow<number>('APP_PORT');
   const cookieSecret = configService.getOrThrow<string>('COOKIE_SECRET');
 
+  const redisService = app.get(RedisService);
+
   app.useGlobalPipes(
     new ValidationPipe({
       transform: true,
@@ -44,11 +49,18 @@ async function bootstrap() {
     exposedHeaders: ['set-cookie'],
   });
 
-  await app.register(fastifyCookie, {
+  await app.register(fastifyCookie, { secret: cookieSecret });
+  await app.register(fastifySession, {
     secret: cookieSecret,
-    parseOptions: {},
+    saveUninitialized: false,
+    cookie: {
+      secure: false,
+      httpOnly: true,
+      sameSite: 'lax',
+      maxAge: 60 * 60 * 24 * 28, // 28 дней
+    },
+    store: new RedisStore({ client: redisService }),
   });
-
   await app.register(fastifyHelmet);
   await app.register(fastifyMultipart, {
     limits: {
