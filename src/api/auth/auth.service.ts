@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -14,9 +15,14 @@ import {
 import { IClient, IConfirmationCode } from 'src/common/interfaces';
 import { AccountRepository } from 'src/common/repositories/accounts.repository';
 import { AccountsService } from '../accounts/accounts.service';
-import { randomBytes } from 'crypto';
 import { MailService } from 'src/infra/mail/mail.service';
 import { RedisService } from 'src/infra/redis/redis.service';
+import {
+  mailerRatelimitKey,
+  registerPendingKey,
+  registrationCodeKey,
+} from 'src/common/utils';
+import { Role } from 'prisma/__generated__';
 
 @Injectable()
 export class AuthService {
@@ -39,23 +45,40 @@ export class AuthService {
    */
   public async login(dto: LoginDto, client: IClient) {
     const { email, password } = dto;
+    const { req } = client;
+
+    const unverifiedSession = req.session.unverifiedSession;
+    if (unverifiedSession) {
+      throw new BadRequestException(
+        'You will not be able to use your account until you confirm its registration.',
+      );
+    }
+
+    const session = req.session.userSession;
+
+    if (session) {
+      throw new BadRequestException('Account login has already been completed');
+    }
 
     const user = await this.getUserForLogin(email);
 
     if (!user) {
-      this.throwIncorrectLoginDataException();
+      throw new ForbiddenException('Incorrect login or password');
     }
 
     const isValidPassword = await verify(user.password, password);
 
     if (!isValidPassword) {
-      this.throwIncorrectLoginDataException();
+      throw new ForbiddenException('Incorrect login or password');
     }
 
-    await this.saveSession({ id: user.id }, client);
+    const { id, role } = user;
+    await this.saveSession(id, client, role);
 
     return {
       message: 'Successful authorization',
+      uid: user.id,
+      ip: client.clientIp,
     };
   }
 
@@ -68,7 +91,7 @@ export class AuthService {
     try {
       const user = await this.repo.findUnique({
         where: { email },
-        select: { id: true, email: true, password: true, isConfirmed: true },
+        select: { id: true, email: true, password: true, role: true },
       });
       return user;
     } catch (err) {
@@ -83,13 +106,6 @@ export class AuthService {
   }
 
   /**
-   * Выбросить ошибку авторизации
-   */
-  private throwIncorrectLoginDataException(): never {
-    throw new ForbiddenException('Incorrect login or password');
-  }
-
-  /**
    * Регистрация нового пользователя и отправка письма с кодом
    * для подтверждения почты
    * @param dto
@@ -97,19 +113,33 @@ export class AuthService {
    * @returns
    */
   public async register(dto: RegisterUserDTO, client: IClient) {
-    const { clientIp, req } = client;
-    await this.accountService.createRegisterPending(dto, clientIp);
-    await this.sendConfirmationCode(dto.email);
-    req.session.tempSession = { email: dto.email };
+    const { req } = client;
+    const { email } = dto;
+
+    const session = req.session.userSession;
+
+    if (session) {
+      throw new BadRequestException('Account login has already been completed');
+    }
+
+    await this.accountService.createRegistrationPending(dto);
+    await this.sendConfirmationCode(email, client);
+    req.session.unverifiedSession = { email };
+
+    return {
+      message:
+        'Its almost done. It remains to confirm the account using a code sent to the specified email address.',
+    };
   }
 
   /**
    * Отправить код подтверждения на указанный адрес почты
    * @param email
    */
-  private async sendConfirmationCode(email: string) {
-    const code = randomBytes(3).toString('hex');
+  private async sendConfirmationCode(email: string, client: IClient) {
+    const code = String(Math.floor(Math.random() * 999999));
     const data: IConfirmationCode = { email, code };
+    await this.checkConfirmRateLimit(client);
     try {
       await this.saveConfirmationCode(data);
     } catch (err) {
@@ -134,6 +164,28 @@ export class AuthService {
     }
   }
 
+  private async checkConfirmRateLimit(client: IClient) {
+    const { req } = client;
+    const { ip } = req;
+    const redisKey = mailerRatelimitKey(ip);
+
+    const attempts = await this.redis.incr(redisKey);
+    if (attempts == 1) {
+      await this.redis.expire(redisKey, 60 * 15); // 15 минут
+    }
+    if (attempts > 5) {
+      throw new HttpException(
+        {
+          message:
+            'Whoa! It seems that you are requesting too many verification codes.Try again later',
+          error: 'Too many requests',
+          statusCode: 429,
+        },
+        429,
+      );
+    }
+  }
+
   /**
    * Сохранить код подтверждения в redis
    * @param data
@@ -141,10 +193,14 @@ export class AuthService {
   private async saveConfirmationCode(data: IConfirmationCode) {
     const email = data.email;
     const jsonData = JSON.stringify(data);
-    const redisKey = `code:confirm:${email}`;
-    await this.redis.set(redisKey, jsonData, 'EX', 1800);
+    const redisKey = registrationCodeKey(email);
+    await this.redis.set(redisKey, jsonData, 'EX', 900);
   }
 
+  /**
+   * Отправить код подтверждения на адрес электронной почты
+   * @param data
+   */
   private async sendEmailWithConfirmationCode(data: IConfirmationCode) {
     const { email, code } = data;
     await this.mailService.sendMail({
@@ -163,23 +219,23 @@ export class AuthService {
     const { req } = client;
     const { code } = dto;
 
-    const tempSession = req.session.tempSession;
     const userSession = req.session.userSession;
     if (userSession) {
       throw new BadRequestException('The account has already been verified.');
     }
-    if (!tempSession) {
+    const unverifiedSession = req.session.unverifiedSession;
+    if (!unverifiedSession) {
       throw new BadRequestException('Unable to verify non-existent account');
     }
 
-    const { email } = tempSession;
-    const redisKey = `code:confirm:${email}`;
+    const { email } = unverifiedSession;
+    const redisKey = registrationCodeKey(email);
     const savedCodeJSON = await this.redis.get(redisKey);
-    const savedCodeObject = JSON.parse(savedCodeJSON);
-    if (!savedCodeObject) {
-      await this.sendConfirmationCode(email);
+    if (!savedCodeJSON) {
+      await this.sendConfirmationCode(email, client);
       throw new BadRequestException('Verification code has expired');
     }
+    const savedCodeObject = JSON.parse(savedCodeJSON);
 
     const savedCode = savedCodeObject.code;
 
@@ -190,17 +246,19 @@ export class AuthService {
 
     await this.redis.del(redisKey);
 
-    const tempUserKey = `pending:register:${email}`;
+    const tempUserKey = registerPendingKey(email);
     const tempUser = await this.redis.get(tempUserKey);
     if (!tempUser) {
       throw new ForbiddenException('Account verification period has expired');
     }
     const userDto = JSON.parse(tempUser) as RegisterUserDTO;
-    const user = await this.accountService.createNewUser(userDto);
+    const user = await this.accountService.allowRegistrationPending(userDto);
     await this.redis.del(tempUserKey);
 
-    req.session.tempSession = undefined;
-    await this.saveSession({ id: user.id }, client);
+    req.session.unverifiedSession = undefined;
+    await this.saveSession(user.id, client);
+
+    return { message: 'Account confirmed' };
   }
 
   /**
@@ -208,8 +266,17 @@ export class AuthService {
    * @param sessionData
    * @param client
    */
-  private async saveSession(sessionData: { id: string }, client: IClient) {
+  private async saveSession(
+    id: string,
+    client: IClient,
+    role: Role = 'REGULAR',
+  ) {
     const { req } = client;
+    const sessionData = {
+      id,
+      role,
+      client: { ip: req.ip, ua: req.headers['user-agent'] },
+    };
     req.session.userSession = sessionData;
   }
 

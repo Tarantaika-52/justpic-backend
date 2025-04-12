@@ -9,6 +9,7 @@ import { hash } from 'argon2';
 import { FastifyRequest } from 'fastify';
 import { RegisterUserDTO } from 'src/common/dto/users/register-user.dto';
 import { AccountRepository } from 'src/common/repositories/accounts.repository';
+import { accountCacheKey, registerPendingKey } from 'src/common/utils';
 import { RedisService } from 'src/infra/redis/redis.service';
 
 @Injectable()
@@ -22,21 +23,18 @@ export class AccountsService {
     this.logger = new Logger(AccountsService.name);
   }
 
-  /**
-   * DEBUG ONLY!
-   * NOT FOR PROD!
-   */
-  public async getAll() {
-    const users = await this.repo.findMany({});
-    return users;
-  }
-
   public async getUserBySession(req: FastifyRequest) {
+    const unverifiedSession = req.session.unverifiedSession;
+    if (unverifiedSession) {
+      throw new ForbiddenException(
+        'You will not be able to use your account until you confirm its registration.',
+      );
+    }
     const session = req.session.userSession;
     if (!session) {
       throw new ForbiddenException('Invalid session');
     }
-    const user = await this.getById(session.id);
+    const user = await this.getByIdOrThrow(session.id);
     if (!user) {
       throw new NotFoundException('The session does not contain a user');
     }
@@ -49,7 +47,7 @@ export class AccountsService {
    * @param clientIP
    * @returns
    */
-  public async createNewUser(dto: RegisterUserDTO) {
+  public async allowRegistrationPending(dto: RegisterUserDTO) {
     const { email, username, password } = dto;
 
     const isEmailTaken = await this.isEmailAlreadyTaken(dto.email);
@@ -74,15 +72,20 @@ export class AccountsService {
     return newUser;
   }
 
-  public async createRegisterPending(dto: RegisterUserDTO, clientIP: string) {
+  public async createRegistrationPending(dto: RegisterUserDTO) {
     const { username, email, password: pass } = dto;
+
+    const isEmailTaken = await this.isEmailAlreadyTaken(email);
+    if (isEmailTaken) {
+      throw new BadRequestException('Email is not available for registration');
+    }
+
     const password = await hash(pass);
-    const redisKey = `pending:register:${email}`;
+    const redisKey = registerPendingKey(email);
     const data = {
       username,
       email,
       password,
-      clientIP,
     };
 
     await this.redis.set(redisKey, JSON.stringify(data), 'EX', 3600);
@@ -93,8 +96,8 @@ export class AccountsService {
    * @param id
    * @returns
    */
-  public async getById(id: string) {
-    const redisKey = `cache:a:${id}`;
+  public async getByIdOrThrow(id: string) {
+    const redisKey: string = accountCacheKey(id);
     const cached = await this.redis.get(redisKey);
     if (cached) {
       return JSON.parse(cached);
@@ -104,6 +107,7 @@ export class AccountsService {
       where: { id },
       select: {
         id: true,
+        email: true,
         region: true,
         isMetricsAllowed: true,
         isNsfwAllowed: true,
@@ -131,11 +135,5 @@ export class AccountsService {
     const isTaken: boolean = count > 0;
 
     return isTaken;
-  }
-
-  public async delete(id: string): Promise<void> {
-    const redisKey = `cache:a:${id}`;
-    await this.redis.del(redisKey);
-    await this.repo.delete({ where: { id } });
   }
 }

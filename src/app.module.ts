@@ -4,6 +4,7 @@ import { ApiModule } from './api';
 import { CommonModule } from './common';
 import { InfraModule } from './infra/infra.module';
 import { UserAgentMiddleware } from './common/middlewares/user-agent.middleware';
+import { RateLimitMiddleware } from './common/middlewares/rate-limit.middleware';
 
 @Module({
   imports: [
@@ -15,8 +16,10 @@ import { UserAgentMiddleware } from './common/middlewares/user-agent.middleware'
     InfraModule,
   ],
 })
+// todo: добавить middleware для ограничения запросов в минуту с одного IP
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer.apply(UserAgentMiddleware).forRoutes('*');
+    consumer.apply(RateLimitMiddleware).forRoutes('*');
   }
 }

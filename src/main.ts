@@ -20,6 +20,7 @@ async function bootstrap() {
     AppModule,
     new FastifyAdapter({
       logger: false,
+      bodyLimit: 16 * 1024 * 1024,
     }),
   );
 
@@ -57,7 +58,7 @@ async function bootstrap() {
       secure: false,
       httpOnly: true,
       sameSite: 'lax',
-      maxAge: 60 * 60 * 24 * 28, // 28 дней
+      maxAge: 1000 * 60 * 60 * 24 * 7, // 7 дней
     },
     store: new RedisStore({ client: redisService }),
   });
@@ -65,7 +66,7 @@ async function bootstrap() {
   await app.register(fastifyMultipart, {
     limits: {
       files: 1,
-      fileSize: 100,
+      fileSize: 48,
       fields: 10,
     },
   });
@@ -73,7 +74,7 @@ async function bootstrap() {
   try {
     await app.listen(appPort, '0.0.0.0');
 
-    logger.log(`🚀 Server is running at: ${appPort}`);
+    logger.log(`🚀 Server is running at localhost:${appPort}`);
   } catch (err) {
     logger.fatal(`❌ Failed to start server: ${err.message}`);
     process.exit(1);

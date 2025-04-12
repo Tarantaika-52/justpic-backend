@@ -1,63 +1,27 @@
 import { FastifyRequest } from 'fastify';
 import { AccountsService } from './accounts.service';
-import {
-  Get,
-  Controller,
-  HttpCode,
-  HttpStatus,
-  Patch,
-  Param,
-  Delete,
-  Req,
-} from '@nestjs/common';
+import { Get, Controller, HttpCode, HttpStatus, Req } from '@nestjs/common';
+import { Auth } from 'src/common/decorators';
 
 @Controller('accounts')
 export class AccountsController {
   constructor(private readonly accountService: AccountsService) {}
 
-  /**
-   * WARNING!!!
-   * DEBUG ONLY!!!
-   * NOT FOR PRODUCTION!!!
-   */
   @Get()
   @HttpCode(HttpStatus.OK)
+  @Auth('ADMIN')
   public async getAll() {
-    return await this.accountService.getAll();
+    return;
   }
 
   /**
-   * Получить данные пользователя
+   * Получить данные пользователя из сессии
    * @returns
    */
   @Get('me')
   @HttpCode(HttpStatus.OK)
   public async getMe(@Req() req: FastifyRequest) {
+    // todo: добавить проверку на украденные куки
     return await this.accountService.getUserBySession(req);
-  }
-
-  @Get(':id')
-  @HttpCode(HttpStatus.OK)
-  public async getById(@Param('id') id: string) {
-    const user = await this.accountService.getById(id);
-    return {
-      user,
-    };
-  }
-
-  /**
-   * Обновить данные пользователя
-   * @returns
-   */
-  @Patch('me')
-  @HttpCode(HttpStatus.OK)
-  public async patchMe() {
-    return;
-  }
-
-  @Delete(':id')
-  @HttpCode(HttpStatus.OK)
-  public async deleteById(@Param('id') id: string) {
-    return await this.accountService.delete(id);
   }
 }
