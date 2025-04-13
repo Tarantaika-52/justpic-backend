@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   Ip,
@@ -8,17 +9,21 @@ import {
   Req,
   Res,
 } from '@nestjs/common';
-import { AuthService } from './auth.service';
+import { AuthService } from './services/auth.service';
 import {
   ConfirmAccountDTO,
   LoginDto,
   RegisterUserDTO,
 } from 'src/common/dto/users';
 import { FastifyReply, FastifyRequest } from 'fastify';
+import { ConfirmationService } from './services/confirmation.service';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly confirmationService: ConfirmationService,
+  ) {}
 
   /**
    * Создание запроса на регистрацию нового пользователя
@@ -36,7 +41,7 @@ export class AuthController {
     @Req() req: FastifyRequest,
     @Res({ passthrough: true }) res: FastifyReply,
   ) {
-    return await this.authService.register(dto, { clientIp, req, res });
+    return await this.authService.register(dto, { ip: clientIp, req, res });
   }
 
   /**
@@ -55,7 +60,7 @@ export class AuthController {
     @Req() req: FastifyRequest,
     @Res({ passthrough: true }) res: FastifyReply,
   ) {
-    return await this.authService.login(dto, { clientIp, req, res });
+    return await this.authService.login(dto, { ip: clientIp, req, res });
   }
 
   /**
@@ -74,7 +79,17 @@ export class AuthController {
     @Req() req: FastifyRequest,
     @Res({ passthrough: true }) res: FastifyReply,
   ) {
-    return await this.authService.confirmAccount(dto, { clientIp, req, res });
+    return await this.authService.confirmAccount(dto, {
+      ip: clientIp,
+      req,
+      res,
+    });
+  }
+
+  @Get('new-code')
+  @HttpCode(HttpStatus.OK)
+  public async requestNewConfirmationCode(@Req() req: FastifyRequest) {
+    return await this.confirmationService.requestNewConfirmationCode(req);
   }
 
   /**

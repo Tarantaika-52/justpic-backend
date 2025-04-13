@@ -3,16 +3,9 @@ import { AuthModule } from './auth/auth.module';
 import { AccountsModule } from './accounts/accounts.module';
 import { ProfileModule } from './profile/profile.module';
 import { CommonModule } from 'src/common';
-import { MetricsModule } from './metrics/metrics.module';
 
 @Module({
-  imports: [
-    AuthModule,
-    AccountsModule,
-    ProfileModule,
-    CommonModule,
-    MetricsModule,
-  ],
+  imports: [AuthModule, AccountsModule, ProfileModule, CommonModule],
   exports: [AccountsModule],
 })
 export class ApiModule {}

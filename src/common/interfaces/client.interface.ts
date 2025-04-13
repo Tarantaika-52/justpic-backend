@@ -1,7 +1,7 @@
 import { FastifyReply, FastifyRequest } from 'fastify';
 
 export interface IClient {
-  clientIp: string;
+  ip: string;
   req: FastifyRequest;
   res: FastifyReply;
 }

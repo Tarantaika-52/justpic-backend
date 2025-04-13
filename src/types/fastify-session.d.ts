@@ -2,15 +2,24 @@ import 'fastify';
 import { Role } from 'prisma/__generated__';
 declare module 'fastify' {
   interface Session {
+    /**
+     * Подтвержденная сессия для пользователя, вошедшего в аккаунт
+     */
     userSession?: {
-      id: string;
-      role: Role;
+      user: {
+        id: string;
+        role: Role;
+      };
       client: {
         ip: string;
         ua: string;
       };
     };
-    unverifiedSession?: {
+
+    /**
+     * Сессия для неподтвержденного аккаунта
+     */
+    pendingSession?: {
       email: string;
     };
   }

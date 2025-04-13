@@ -12,10 +12,9 @@ export class MailService {
    * @param config
    */
   public constructor(private readonly config: ConfigService) {
-    this.logger = new Logger(MailService.name);
-    this.logger.log('🔄 Initializing Resend connection...');
-    const resendKey = config.getOrThrow<string>('RESEND_KEY');
+    const resendKey: string = config.getOrThrow<string>('RESEND_KEY');
     this.resend = new Resend(resendKey);
+    this.logger = new Logger(MailService.name);
     this.logger.log('✅ Resend connected successfully');
   }
 
@@ -28,14 +27,21 @@ export class MailService {
     subject: string;
     html: string;
   }): Promise<void> {
-    if (!params) {
-      throw new Error('');
-    }
-
     await this.resend.emails.send({
       from: 'justpic-test <justpic@resend.dev>',
       ...params,
     });
+
     this.logger.log(`✉️ A letter has been sent to the address: ${params.to}`);
+  }
+
+  public async sendMailWithCode(params: { email: string; code: string }) {
+    const { email, code } = params;
+
+    await this.sendMail({
+      to: email,
+      subject: 'Подтверждение регистрации аккаунта',
+      html: `<p>Ваш код подтверждения: ${code}</p>`,
+    });
   }
 }

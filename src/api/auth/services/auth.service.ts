@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ForbiddenException,
-  HttpException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -12,17 +11,17 @@ import {
   LoginDto,
   RegisterUserDTO,
 } from 'src/common/dto/users';
-import { IClient, IConfirmationCode } from 'src/common/interfaces';
+import { IClient } from 'src/common/interfaces';
 import { AccountRepository } from 'src/common/repositories/accounts.repository';
-import { AccountsService } from '../accounts/accounts.service';
-import { MailService } from 'src/infra/mail/mail.service';
+import { AccountsService } from '../../accounts/accounts.service';
 import { RedisService } from 'src/infra/redis/redis.service';
 import {
-  mailerRatelimitKey,
-  registerPendingKey,
-  registrationCodeKey,
+  getRegisterPendingKey,
+  getRegistrationCodeKey,
 } from 'src/common/utils';
-import { Role } from 'prisma/__generated__';
+import { ConfirmationService } from './confirmation.service';
+import { FastifyRequest } from 'fastify';
+import { SessionService } from './session.service';
 
 @Injectable()
 export class AuthService {
@@ -30,8 +29,9 @@ export class AuthService {
 
   public constructor(
     private readonly repo: AccountRepository,
+    private readonly confirmationService: ConfirmationService,
+    private readonly sessionService: SessionService,
     private readonly accountService: AccountsService,
-    private readonly mailService: MailService,
     private readonly redis: RedisService,
   ) {
     this.logger = new Logger(AuthService.name);
@@ -47,9 +47,11 @@ export class AuthService {
     const { email, password } = dto;
     const { req } = client;
 
-    const unverifiedSession = req.session.unverifiedSession;
+    // todo: Добавить возможность войти в неподтвержденный аккаунт для подтверждения регистрации
+
+    const unverifiedSession = req.session.pendingSession;
     if (unverifiedSession) {
-      throw new BadRequestException(
+      throw new ForbiddenException(
         'You will not be able to use your account until you confirm its registration.',
       );
     }
@@ -73,12 +75,14 @@ export class AuthService {
     }
 
     const { id, role } = user;
-    await this.saveSession(id, client, role);
+    await this.sessionService.saveSession(id, req, role);
 
     return {
       message: 'Successful authorization',
-      uid: user.id,
-      ip: client.clientIp,
+      details: {
+        id: user.id,
+        ip: client.ip,
+      },
     };
   }
 
@@ -113,7 +117,7 @@ export class AuthService {
    * @returns
    */
   public async register(dto: RegisterUserDTO, client: IClient) {
-    const { req } = client;
+    const { req, ip } = client;
     const { email } = dto;
 
     const session = req.session.userSession;
@@ -122,9 +126,11 @@ export class AuthService {
       throw new BadRequestException('Account login has already been completed');
     }
 
+    // todo: добавить проверку на существование запроса на регистрацию с таким email. В случае, если пароль не сходится, выкинуть исключение. Если пароль подходит, выполнить вход в неподтвержденный аккаунт и, если кода подтверждения нет, отправить новый.
+
     await this.accountService.createRegistrationPending(dto);
-    await this.sendConfirmationCode(email, client);
-    req.session.unverifiedSession = { email };
+    await this.confirmationService.sendConfirmationCode(email, ip);
+    await this.savePendingSession(email, req);
 
     return {
       message:
@@ -133,107 +139,31 @@ export class AuthService {
   }
 
   /**
-   * Отправить код подтверждения на указанный адрес почты
-   * @param email
-   */
-  private async sendConfirmationCode(email: string, client: IClient) {
-    const code = String(Math.floor(Math.random() * 999999));
-    const data: IConfirmationCode = { email, code };
-    await this.checkConfirmRateLimit(client);
-    try {
-      await this.saveConfirmationCode(data);
-    } catch (err) {
-      this.logger.error(
-        'Redis error: Failed to save verification code',
-        err.message,
-      );
-      throw new InternalServerErrorException(
-        'Failed to save verification code',
-      );
-    }
-    try {
-      await this.sendEmailWithConfirmationCode(data);
-    } catch (err) {
-      this.logger.error(
-        'Failed to send email with verification code',
-        err.message,
-      );
-      throw new InternalServerErrorException(
-        'Failed to send email with verification code',
-      );
-    }
-  }
-
-  private async checkConfirmRateLimit(client: IClient) {
-    const { req } = client;
-    const { ip } = req;
-    const redisKey = mailerRatelimitKey(ip);
-
-    const attempts = await this.redis.incr(redisKey);
-    if (attempts == 1) {
-      await this.redis.expire(redisKey, 60 * 15); // 15 минут
-    }
-    if (attempts > 5) {
-      throw new HttpException(
-        {
-          message:
-            'Whoa! It seems that you are requesting too many verification codes.Try again later',
-          error: 'Too many requests',
-          statusCode: 429,
-        },
-        429,
-      );
-    }
-  }
-
-  /**
-   * Сохранить код подтверждения в redis
-   * @param data
-   */
-  private async saveConfirmationCode(data: IConfirmationCode) {
-    const email = data.email;
-    const jsonData = JSON.stringify(data);
-    const redisKey = registrationCodeKey(email);
-    await this.redis.set(redisKey, jsonData, 'EX', 900);
-  }
-
-  /**
-   * Отправить код подтверждения на адрес электронной почты
-   * @param data
-   */
-  private async sendEmailWithConfirmationCode(data: IConfirmationCode) {
-    const { email, code } = data;
-    await this.mailService.sendMail({
-      to: email,
-      subject: 'Подтверждение регистрации аккаунта',
-      html: `<p>Ваш код подтверждения: ${code}</p>`,
-    });
-  }
-
-  /**
    * Подтвердить почту через код из письма
    * @param email
    * @param code
    */
   public async confirmAccount(dto: ConfirmAccountDTO, client: IClient) {
-    const { req } = client;
+    const { req, ip } = client;
     const { code } = dto;
 
     const userSession = req.session.userSession;
     if (userSession) {
       throw new BadRequestException('The account has already been verified.');
     }
-    const unverifiedSession = req.session.unverifiedSession;
+    const unverifiedSession = req.session.pendingSession;
     if (!unverifiedSession) {
       throw new BadRequestException('Unable to verify non-existent account');
     }
 
     const { email } = unverifiedSession;
-    const redisKey = registrationCodeKey(email);
+    const redisKey = getRegistrationCodeKey(email);
     const savedCodeJSON = await this.redis.get(redisKey);
     if (!savedCodeJSON) {
-      await this.sendConfirmationCode(email, client);
-      throw new BadRequestException('Verification code has expired');
+      await this.confirmationService.sendConfirmationCode(email, ip);
+      throw new BadRequestException(
+        'The code expired. A new code has been sent to your email',
+      );
     }
     const savedCodeObject = JSON.parse(savedCodeJSON);
 
@@ -246,7 +176,7 @@ export class AuthService {
 
     await this.redis.del(redisKey);
 
-    const tempUserKey = registerPendingKey(email);
+    const tempUserKey = getRegisterPendingKey(email);
     const tempUser = await this.redis.get(tempUserKey);
     if (!tempUser) {
       throw new ForbiddenException('Account verification period has expired');
@@ -255,37 +185,18 @@ export class AuthService {
     const user = await this.accountService.allowRegistrationPending(userDto);
     await this.redis.del(tempUserKey);
 
-    req.session.unverifiedSession = undefined;
-    await this.saveSession(user.id, client);
+    req.session.pendingSession = undefined;
+    await this.sessionService.saveSession(user.id, req);
 
     return { message: 'Account confirmed' };
   }
 
   /**
-   * Сохранить сессию
-   * @param sessionData
+   * Сохранить неподтвержденную сессию
+   * @param email
    * @param client
    */
-  private async saveSession(
-    id: string,
-    client: IClient,
-    role: Role = 'REGULAR',
-  ) {
-    const { req } = client;
-    const sessionData = {
-      id,
-      role,
-      client: { ip: req.ip, ua: req.headers['user-agent'] },
-    };
-    req.session.userSession = sessionData;
-  }
-
-  /**
-   * Завершить (удалить) сессию
-   * @param client
-   */
-  private async deleteSession(client: IClient) {
-    const { req } = client;
-    req.session = undefined;
+  private async savePendingSession(email: string, req: FastifyRequest) {
+    req.session.pendingSession = { email };
   }
 }

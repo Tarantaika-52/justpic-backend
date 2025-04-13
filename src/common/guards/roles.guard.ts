@@ -3,20 +3,20 @@ import {
   ExecutionContext,
   ForbiddenException,
   Injectable,
+  Logger,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ROLES_KEY } from '../decorators/roles.decorator';
 import { FastifyRequest } from 'fastify';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
-  constructor(
-    private readonly reflector: Reflector,
-    private readonly prisma: PrismaService,
-  ) {}
+  private readonly logger: Logger;
+  constructor(private readonly reflector: Reflector) {
+    this.logger = new Logger(RolesGuard.name);
+  }
 
-  async canActivate(context: ExecutionContext): Promise<boolean> {
+  canActivate(context: ExecutionContext): boolean {
     const roles = this.reflector.getAllAndOverride<string[]>(ROLES_KEY, [
       context.getHandler(),
     ]);
@@ -28,11 +28,10 @@ export class RolesGuard implements CanActivate {
     const req: FastifyRequest = context.switchToHttp().getRequest();
     const session = req.session.userSession;
 
-    if (!session) {
-      throw new ForbiddenException('Invalid session');
-    }
-
-    if (!roles.includes(session.role)) {
+    if (!roles.includes(session.user.role)) {
+      this.logger.warn(
+        `Access denied for user: ${session.user.id} (required: ${roles})`,
+      );
       throw new ForbiddenException(
         'You do not have permission to access this resource',
       );

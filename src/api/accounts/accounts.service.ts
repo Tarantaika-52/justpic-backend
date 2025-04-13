@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -9,7 +8,7 @@ import { hash } from 'argon2';
 import { FastifyRequest } from 'fastify';
 import { RegisterUserDTO } from 'src/common/dto/users/register-user.dto';
 import { AccountRepository } from 'src/common/repositories/accounts.repository';
-import { accountCacheKey, registerPendingKey } from 'src/common/utils';
+import { getAccountCacheKey, getRegisterPendingKey } from 'src/common/utils';
 import { RedisService } from 'src/infra/redis/redis.service';
 
 @Injectable()
@@ -24,17 +23,8 @@ export class AccountsService {
   }
 
   public async getUserBySession(req: FastifyRequest) {
-    const unverifiedSession = req.session.unverifiedSession;
-    if (unverifiedSession) {
-      throw new ForbiddenException(
-        'You will not be able to use your account until you confirm its registration.',
-      );
-    }
     const session = req.session.userSession;
-    if (!session) {
-      throw new ForbiddenException('Invalid session');
-    }
-    const user = await this.getByIdOrThrow(session.id);
+    const user = await this.getByIdOrThrow(session.user.id);
     if (!user) {
       throw new NotFoundException('The session does not contain a user');
     }
@@ -81,14 +71,14 @@ export class AccountsService {
     }
 
     const password = await hash(pass);
-    const redisKey = registerPendingKey(email);
+    const redisKey = getRegisterPendingKey(email);
     const data = {
       username,
       email,
       password,
     };
 
-    await this.redis.set(redisKey, JSON.stringify(data), 'EX', 3600);
+    await this.redis.set(redisKey, JSON.stringify(data), 'EX', 86400);
   }
 
   /**
@@ -97,7 +87,7 @@ export class AccountsService {
    * @returns
    */
   public async getByIdOrThrow(id: string) {
-    const redisKey: string = accountCacheKey(id);
+    const redisKey: string = getAccountCacheKey(id);
     const cached = await this.redis.get(redisKey);
     if (cached) {
       return JSON.parse(cached);
