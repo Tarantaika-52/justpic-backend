@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
-import IBaseRepository from '../interfaces/base-repository.interface';
-import { $Enums, Account, Prisma } from 'prisma/__generated__';
+import { Account, Prisma } from 'prisma/__generated__';
+import { IBaseRepository } from '../interfaces';
 
 type FindArgs = Prisma.AccountFindFirstArgs;
 type CreateArgs = Prisma.AccountCreateArgs;

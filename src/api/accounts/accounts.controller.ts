@@ -15,7 +15,6 @@ export class AccountsController {
   @HttpCode(HttpStatus.OK)
   @Auth()
   public async getMe(@Req() req: FastifyRequest) {
-    // todo: добавить проверку на украденные куки
     return await this.accountService.getUserBySession(req);
   }
 }

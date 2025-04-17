@@ -12,7 +12,7 @@ export class RateLimitMiddleware implements NestMiddleware {
     await this.limiter.use({
       ip,
       actionKey: 'request',
-      maxAttempts: 100,
+      maxAttempts: 150,
       ttl: 300,
       message: 'Hush, hush! You are making requests too often.',
     });

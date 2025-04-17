@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Controller,
   Get,
   HttpCode,
@@ -17,33 +16,40 @@ export class ProfileController {
 
   @Get('me')
   @HttpCode(HttpStatus.OK)
-  public async getMeProfile() {
-    return;
-  }
-
-  @Get(':id')
-  @HttpCode(HttpStatus.OK)
-  public async getProfileByID(@Param('id') id: string) {
-    return;
+  public async getMeProfile(@Req() req: FastifyRequest) {
+    return await this.profileService.findProfileFromSession(req);
   }
 
   @Get('u/:username')
   @HttpCode(HttpStatus.OK)
-  public async getProfileByUsername(@Param('username') username: string) {
+  public async getProfileByUsername(
+    @Param('username') username: string,
+    @Req() req: FastifyRequest,
+  ) {
+    return await this.profileService.findProfileByUsername(username, req);
+  }
+
+  @Patch('me/username')
+  @HttpCode(HttpStatus.OK)
+  public async changeUsername(@Req() req: FastifyRequest) {
+    return;
+  }
+
+  @Patch('me/bio')
+  @HttpCode(HttpStatus.OK)
+  public async changeBio(@Req() req: FastifyRequest) {
     return;
   }
 
   @Patch('me/avatar')
   @HttpCode(HttpStatus.OK)
   public async changeAvatar(@Req() req: FastifyRequest) {
-    const file = await req.file();
+    await req.file();
+  }
 
-    if (!file) {
-      throw new BadRequestException('File not uploaded');
-    }
-
-    console.log(file.filename);
-
-    return true;
+  @Patch('me/banner')
+  @HttpCode(HttpStatus.OK)
+  public async changeBanner(@Req() req: FastifyRequest) {
+    await req.file();
   }
 }

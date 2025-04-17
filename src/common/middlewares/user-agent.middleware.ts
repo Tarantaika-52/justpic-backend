@@ -30,7 +30,6 @@ export class UserAgentMiddleware implements NestMiddleware {
 
   use(req: FastifyRequest, res: FastifyReply, next: () => void) {
     const userAgent = req.headers['user-agent'];
-    // this.logger.debug(userAgent);
     const isSuspicious: boolean = this.isSuspiciousUserAgent(userAgent);
     if (isSuspicious) {
       const ip = req['ip'];

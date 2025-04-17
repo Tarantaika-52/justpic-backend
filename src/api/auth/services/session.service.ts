@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { FastifyRequest } from 'fastify';
 import { Role } from 'prisma/__generated__';
 
@@ -21,6 +21,10 @@ export class SessionService {
     req: FastifyRequest,
     role: Role = 'REGULAR',
   ) {
+    if (req.session.userSession) {
+      throw new BadRequestException('Session already exists');
+    }
+
     const sessionData = {
       user: {
         id,
@@ -35,11 +39,21 @@ export class SessionService {
     req.session.userSession = sessionData;
   }
 
+  public async removePendingSession(req: FastifyRequest) {
+    const session = req.session;
+    session.pendingSession = undefined;
+  }
+
   /**
    * Завершить (удалить) сессию
    * @param req - Объект запроса
    */
-  private async deleteSession(req: FastifyRequest) {
-    req.session.destroy();
+  public async clearSession(req: FastifyRequest) {
+    if (!req.session.userSession) {
+      throw new BadRequestException('Session does not exist');
+    }
+
+    await req.session.destroy();
+    return { message: 'Successful logout' };
   }
 }

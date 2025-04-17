@@ -19,6 +19,42 @@ export class RedisService
     this.logger = new Logger(RedisService.name);
   }
 
+  /**
+   * Обертка для кеширования
+   *
+   * @param key - ключ
+   * @param ttl - время хранения кеша
+   * @param fallbackFunc - фалл бек
+   */
+  public async wrapInCache<T>(
+    key: string,
+    ttl: number,
+    fallbackFunc: () => Promise<T>,
+  ) {
+    const cache = await this.get(key);
+    if (cache) {
+      try {
+        return JSON.parse(cache);
+      } catch (err) {
+        this.logger.error(`Failed to parse cache with key: ${key}`, err);
+        await this.del(key);
+      }
+    }
+
+    try {
+      const data = await fallbackFunc();
+      if (!data) {
+        return null;
+      }
+
+      await this.set(key, JSON.stringify(data), 'EX', ttl);
+      return data;
+    } catch (err) {
+      this.logger.error(`Wrapper fallback error for key: ${key}`, err);
+      throw err;
+    }
+  }
+
   public async onModuleInit() {
     this.logger.log('🔄 Initializing Redis connection...');
 

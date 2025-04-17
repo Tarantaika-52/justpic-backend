@@ -1,18 +1,27 @@
+import { FastifySessionObject } from '@fastify/session';
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
-  InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { FastifyRequest } from 'fastify';
 import { AccountsService } from 'src/api/accounts/accounts.service';
-import { ConfirmAccountDTO } from 'src/common/dto/users';
-import { IClient, IConfirmationCode } from 'src/common/interfaces';
+import { ConfirmAccountDTO, RegisterUserDTO } from 'src/common/dto/users';
+import {
+  IClient,
+  IConfirmationCode,
+  IRegistrationPending,
+} from 'src/common/interfaces';
 import { LimiterService } from 'src/common/libs/limiter/limiter.service';
-import { getRegistrationCodeKey } from 'src/common/utils';
+import {
+  getRegisterPendingKey,
+  getRegistrationCodeKey,
+} from 'src/common/utils';
 import { MailService } from 'src/infra/mail/mail.service';
 import { RedisService } from 'src/infra/redis/redis.service';
+import { SessionService } from './session.service';
 
 /**
  * Сервис для работы с кодами подтверждения (MFA, подтверждение регистрации)
@@ -23,6 +32,7 @@ export class ConfirmationService {
 
   public constructor(
     private readonly accountService: AccountsService,
+    private readonly sessionService: SessionService,
     private readonly mailService: MailService,
     private readonly redis: RedisService,
     private readonly limiter: LimiterService,
@@ -37,12 +47,11 @@ export class ConfirmationService {
    */
   public async requestNewConfirmationCode(req: FastifyRequest) {
     const ip: string = req.ip;
-    const pendingSession = req.session.pendingSession;
-    if (!pendingSession) {
-      throw new BadRequestException('Session does not contain pending data');
-    }
 
-    const email = pendingSession.email;
+    const pendingSession = this.getPendingSessionOrThrow(req);
+    const pendingAccount = await this.getPendingAccountOrThrow(pendingSession);
+
+    const email = pendingAccount.email;
     await this.sendConfirmationCode(email, ip);
 
     return {
@@ -61,10 +70,6 @@ export class ConfirmationService {
    * @param ip - IP-адрес пользователя
    */
   public async sendConfirmationCode(email: string, ip: string): Promise<void> {
-    if (!email || !ip) {
-      throw new BadRequestException('Necessary parameters are missing');
-    }
-
     await this.limiter.use({
       ip,
       actionKey: 'send-code',
@@ -72,27 +77,18 @@ export class ConfirmationService {
       ttl: 900,
     });
 
-    const code: string = await this.generateConfirmationCode();
+    const code: string = this.generateConfirmationCode();
     const confirmationCode: IConfirmationCode = { code, email };
 
     await this.saveConfirmationCode(confirmationCode);
-    await this.sendConfirmationEmail(confirmationCode);
+    await this.mailService.sendMailWithCode(confirmationCode);
   }
 
   /**
    * Метод генерирует случайный код подтверждения из 6 символов
    */
-  private async generateConfirmationCode(): Promise<string> {
-    try {
-      const code = randomUUID().trim().slice(0, 6).toUpperCase();
-
-      return code;
-    } catch (err) {
-      this.logger.error('Could not generate confirmation code');
-      throw new InternalServerErrorException(
-        'Could not generate confirmation code',
-      );
-    }
+  private generateConfirmationCode(): string {
+    return randomUUID().trim().slice(0, 6).toUpperCase();
   }
 
   /**
@@ -100,32 +96,10 @@ export class ConfirmationService {
    */
   private async saveConfirmationCode(data: IConfirmationCode): Promise<void> {
     const email: string = data.email;
-    const json: string = JSON.stringify(data);
+    const code: string = data.code;
     const key: string = getRegistrationCodeKey(email);
 
-    try {
-      await this.redis.set(key, json, 'EX', 900);
-    } catch (err) {
-      this.logger.error('Could not save authorization code in redis');
-      throw new InternalServerErrorException(
-        'Could not generate confirmation code',
-      );
-    }
-  }
-
-  /**
-   * Метод отправляет письмо с кодом подтверждения
-   * на указанный адрес электронной почты
-   */
-  private async sendConfirmationEmail(data: IConfirmationCode): Promise<void> {
-    try {
-      await this.mailService.sendMailWithCode(data);
-    } catch (err) {
-      this.logger.error('Could not send authorization code to email');
-      throw new InternalServerErrorException(
-        'Could not send confirmation code',
-      );
-    }
+    await this.redis.set(key, code, 'EX', 900);
   }
 
   /**
@@ -134,12 +108,11 @@ export class ConfirmationService {
    * @param dto
    * @param client
    */
-  public async confirmRegistrationPending(
+  public async confirmRegistrationFromSession(
     dto: ConfirmAccountDTO,
     client: IClient,
   ) {
     const { req, ip } = client;
-    const code: string = dto.code;
 
     await this.limiter.use({
       ip,
@@ -147,5 +120,100 @@ export class ConfirmationService {
       maxAttempts: 5,
       ttl: 600,
     });
+
+    if (req.session.userSession) {
+      await this.sessionService.removePendingSession(req);
+      throw new BadRequestException('The account has already been verified.');
+    }
+
+    const rawCode: string = dto.code;
+    const { code, key: codeKey } = await this.getCodeBySession(req);
+
+    if (rawCode !== code) {
+      throw new ForbiddenException('Incorrect confirm code');
+    }
+
+    const usr = await this.createConfirmedAccount(req.session.pendingSession);
+
+    await this.redis.del(codeKey);
+
+    await this.sessionService.removePendingSession(req);
+    await this.sessionService.saveSession(usr.id, req);
+
+    this.logger.log(
+      `Account verified from ip ${ip} using the code: ${rawCode}`,
+    );
+    return {
+      message: 'Account confirmed successfully',
+      details: {
+        ip,
+      },
+    };
+  }
+
+  /**
+   * Метод получает код подтверждения, сохраненный в Redis,
+   * используя данные pending-сессии
+   */
+  private async getCodeBySession(req: FastifyRequest) {
+    const pendingSession = this.getPendingSessionOrThrow(req);
+
+    const email: string = pendingSession.email;
+    const key: string = getRegistrationCodeKey(email);
+
+    const code: string = await this.redis.get(key);
+
+    if (!code) {
+      await this.requestNewConfirmationCode(req);
+      throw new BadRequestException(
+        'The code expired. A new code has been sent to your email',
+      );
+    }
+
+    return { code, key };
+  }
+
+  /**
+   * Создает новый аккаунт на базе неподтвержденного временного аккаунта
+   *
+   * @param pendingSession
+   */
+  private async createConfirmedAccount(
+    pendingSession: FastifySessionObject['pendingSession'],
+  ) {
+    const pending = await this.getPendingAccountOrThrow(pendingSession);
+    const dto: RegisterUserDTO = pending;
+
+    const usr = await this.accountService.allowRegistrationPending(dto);
+    await this.redis.del(pending.key);
+    return usr;
+  }
+
+  /**
+   * Проверить существование pending-сессии
+   *
+   * @param req - Объект запроса
+   */
+  private getPendingSessionOrThrow(req: FastifyRequest) {
+    const pendingSession = req.session.pendingSession;
+    if (!pendingSession) {
+      throw new BadRequestException('Session does not contain pending data');
+    }
+
+    return pendingSession;
+  }
+
+  private async getPendingAccountOrThrow(
+    pendingSession: FastifySessionObject['pendingSession'],
+  ): Promise<IRegistrationPending> {
+    const email: string = pendingSession.email;
+    const key = getRegisterPendingKey(email);
+    const registrationPending = JSON.parse(await this.redis.get(key));
+
+    if (!registrationPending) {
+      throw new ForbiddenException('Account verification period has expired');
+    }
+
+    return { ...registrationPending, key };
   }
 }

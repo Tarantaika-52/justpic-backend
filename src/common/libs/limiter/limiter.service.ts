@@ -4,7 +4,7 @@ import {
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
-import { ILimiter } from 'src/common/interfaces/limiter.interface';
+import { ILimiter } from 'src/common/interfaces';
 import { getActionRateLimitKey } from 'src/common/utils';
 import { RedisService } from 'src/infra/redis/redis.service';
 
@@ -48,5 +48,7 @@ export class LimiterService {
         429,
       );
     }
+
+    return attempts;
   }
 }

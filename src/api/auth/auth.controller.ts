@@ -17,11 +17,14 @@ import {
 } from 'src/common/dto/users';
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { ConfirmationService } from './services/confirmation.service';
+import { SessionService } from './services/session.service';
 
 @Controller('auth')
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
+    private readonly sessionService: SessionService,
+    private readonly confirmService: ConfirmationService,
     private readonly confirmationService: ConfirmationService,
   ) {}
 
@@ -75,12 +78,12 @@ export class AuthController {
   @HttpCode(HttpStatus.PERMANENT_REDIRECT)
   public async confirmRegistration(
     @Body() dto: ConfirmAccountDTO,
-    @Ip() clientIp: string,
+    @Ip() ip: string,
     @Req() req: FastifyRequest,
     @Res({ passthrough: true }) res: FastifyReply,
   ) {
-    return await this.authService.confirmAccount(dto, {
-      ip: clientIp,
+    return await this.confirmService.confirmRegistrationFromSession(dto, {
+      ip,
       req,
       res,
     });
@@ -98,13 +101,9 @@ export class AuthController {
    * @param req - запрос
    * @param res - ответ
    */
-  @Post('me')
+  @Post('logout')
   @HttpCode(HttpStatus.OK)
-  public async authMe(
-    @Ip() clientIp: string,
-    @Req() req: FastifyRequest,
-    @Res({ passthrough: true }) res: FastifyReply,
-  ) {
-    //
+  public async authMe(@Req() req: FastifyRequest) {
+    return await this.sessionService.clearSession(req);
   }
 }
